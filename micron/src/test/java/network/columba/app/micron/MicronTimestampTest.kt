@@ -52,6 +52,23 @@ class MicronTimestampTest {
                 FormatCase("trailing no-pad percent", fridayEvening, "abc%-", "abc%"),
                 FormatCase("no-pad is ignored where there is nothing to pad", fridayEvening, "%-Z|%-s|%-p", "EST|1789178907|PM"),
                 FormatCase("text around the conversions", fridayEvening, "at %H:%M on %F", "at 21:08 on 2026-09-11"),
+                FormatCase("century", tuesdayMorning, "%C", "20"),
+                FormatCase("locale date and time, in the C locale", tuesdayMorning, "%c", "Tue Sep  1 09:05:07 2026"),
+                FormatCase("iso week-based year", fridayEvening, "%G|%g", "2026|26"),
+                FormatCase("hour, space padded", tuesdayMorning, "%k", " 9"),
+                FormatCase("12-hour clock, space padded", tuesdayMorning, "%l", " 9"),
+                FormatCase("locale date, in the C locale", fridayEvening, "%x", "09/11/26"),
+                FormatCase("locale time, in the C locale", fridayEvening, "%X", "21:08:27"),
+                FormatCase("locale 12-hour time, in the C locale", tuesdayMorning, "%r", "09:05:07 AM"),
+                FormatCase("newline and tab", fridayEvening, "%n%t", "\n\t"),
+                FormatCase("iso weekday and week number", fridayEvening, "%u|%w", "5|5"),
+                FormatCase("week number, Sunday first", fridayEvening, "%U", "36"),
+                FormatCase("week number, Monday first", fridayEvening, "%W", "36"),
+                FormatCase("iso week number", fridayEvening, "%V", "37"),
+                FormatCase("bsd date form", tuesdayMorning, "%v", " 1-Sep-2026"),
+                FormatCase("date(1) form", tuesdayMorning, "%+", "Tue Sep  1 09:05:07 EST 2026"),
+                FormatCase("space and zero padding flags", tuesdayMorning, "%-d|%_d|%0d|%-H|%_H|%0H", "1| 1|01|9| 9|09"),
+                FormatCase("E and O modifiers change nothing in the C locale", tuesdayMorning, "%Ec|%Od|%OX|%OY", "Tue Sep  1 09:05:07 2026|01|09:05:07|2026"),
             )
 
         for (case in cases) {

@@ -55,7 +55,8 @@ seconds where Columba shows a local time.
 
 The construct is defined by the gonomadnet port, and its format language is POSIX strftime:
 the conversions Python 3's `time.strftime` accepts, so a page renders identically on every
-client that supports it. A page that does not use `` `T `` parses exactly as before. Two
-divergences are accepted: an instant outside `java.time`'s calendar renders as its payload
-rather than as a year beyond it, and `%Z` reads Java's `z` formatter because
+client that supports it. A page that does not use `` `T `` parses exactly as before.
+
+One divergence is accepted: an instant outside `java.time`'s calendar renders as its payload
+rather than as a year beyond it. `%Z` is read from Java's `z` formatter, since
 `ZoneId.getDisplayName` returns CLDR metazone titles (`ET` where strftime says `EDT`).

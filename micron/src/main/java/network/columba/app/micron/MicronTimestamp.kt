@@ -5,6 +5,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
+import java.time.temporal.IsoFields
 import java.util.Locale
 import kotlin.math.abs
 
@@ -17,11 +18,13 @@ import kotlin.math.abs
  * ```
  *
  * The page supplies unix seconds, which carry no timezone, and the client renders that
- * instant in the reader's own zone. [format] is a strftime format — the conversions Python
- * 3's `time.strftime` accepts — and an empty one selects [DEFAULT_FORMAT].
+ * instant in the reader's own zone. [format] is a strftime format — every conversion C
+ * strftime defines, plus the glibc and BSD extensions — and an empty one selects
+ * [DEFAULT_FORMAT]. The conversions strftime resolves through the locale are pinned to
+ * their C locale forms, so a page renders the same text on every device.
  *
- * The engine is hand-written because [DateTimeFormatter] has no no-pad (`%-`) flag and
- * rejects an unknown conversion instead of passing it through.
+ * The engine is hand-written because [DateTimeFormatter] has no padding flags and rejects
+ * an unknown conversion instead of passing it through.
  */
 object MicronTimestamp {
     /** Used when a construct names no format: `Fri Sep 11, 2026 9:08:27PM EST`. */
@@ -29,6 +32,12 @@ object MicronTimestamp {
 
     /** Opens and closes a timestamp construct. */
     internal const val MARKER = "`T"
+
+    /** Padding flags that may follow a `%`: no padding, space padding, zero padding. */
+    private const val PAD_FLAGS = "-_0"
+
+    /** Modifiers that may precede a conversion; POSIX makes both no-ops in the C locale. */
+    private const val MODIFIERS = "EO"
 
     /**
      * Renders unix [seconds] in [zone], the device's own zone by default. Throws
@@ -73,9 +82,9 @@ object MicronTimestamp {
     )
 
     /**
-     * Expands the conversion at the `%` at [percent], including its `-` no-pad flag. POSIX
-     * leaves an unrecognised conversion undefined, so it is copied through verbatim: a
-     * typo in a page's format stays visible instead of vanishing.
+     * Expands the conversion at the `%` at [percent], including any padding flag and E/O
+     * modifier. An unrecognised conversion is copied through verbatim: POSIX leaves it
+     * undefined, and that keeps a typo in a page's format visible.
      */
     private fun expansionAt(
         time: ZonedDateTime,
@@ -83,26 +92,39 @@ object MicronTimestamp {
         percent: Int,
     ): Expansion {
         var cursor = percent + 1
-        val noPad = cursor < format.length && format[cursor] == '-'
-        if (noPad) cursor++
+        val flag = if (cursor < format.length && format[cursor] in PAD_FLAGS) format[cursor] else null
+        if (flag != null) cursor++
+        if (cursor + 1 < format.length && format[cursor] in MODIFIERS) cursor++
         if (cursor >= format.length) return Expansion("%", format.length)
 
-        val expansion = expand(time, format[cursor], noPad)
+        val expansion = expand(time, format[cursor], flag)
         return Expansion(expansion ?: format.substring(percent, cursor + 1), cursor + 1)
     }
 
+    /** A dispatch table over the conversions, so it is long rather than deep. */
+    @Suppress("CyclomaticComplexMethod")
     private fun expand(
         time: ZonedDateTime,
         conversion: Char,
-        noPad: Boolean,
+        flag: Char?,
     ): String? =
         when (conversion) {
             '%' -> "%"
+            '+' -> formatTime(time, "%a %b %e %H:%M:%S %Z %Y") // the date(1) default format
             'a', 'A', 'b', 'h', 'B' -> name(time, conversion)
-            'd', 'e', 'H', 'I', 'j', 'm', 'M', 'S', 'y' -> number(time, conversion, noPad)
-            'D', 'F', 'R', 'T' -> composite(time, conversion)
+            'c', 'D', 'F', 'r', 'R', 'T', 'v', 'x', 'X' -> composite(time, conversion)
+            'd', 'e', 'H', 'I', 'j', 'k', 'l', 'm', 'M', 'S', 'y', 'C', 'V' -> number(time, conversion, flag)
+            'g' -> pad(isoWeekYear(time) % 100, 2, flag, spaceFill = false)
+            'G' -> isoWeekYear(time).toString()
+            'n' -> "\n"
             'p' -> if (time.hour < 12) "AM" else "PM"
+            'P' -> if (time.hour < 12) "am" else "pm"
             's' -> time.toEpochSecond().toString()
+            't' -> "\t"
+            'u' -> time.dayOfWeek.value.toString()
+            'U' -> pad(weekOfYear(time, sundayFirst = true), 2, flag, spaceFill = false)
+            'w' -> (time.dayOfWeek.value % 7).toString()
+            'W' -> pad(weekOfYear(time, sundayFirst = false), 2, flag, spaceFill = false)
             'Y' -> time.year.toString()
             'z' -> zoneOffset(time)
             'Z' -> zoneName(time)
@@ -124,30 +146,38 @@ object MicronTimestamp {
     private fun number(
         time: ZonedDateTime,
         conversion: Char,
-        noPad: Boolean,
+        flag: Char?,
     ): String =
         when (conversion) {
-            'd' -> padded(time.dayOfMonth, 2, spaceFill = false, noPad = noPad)
-            'e' -> padded(time.dayOfMonth, 2, spaceFill = true, noPad = noPad)
-            'H' -> padded(time.hour, 2, spaceFill = false, noPad = noPad)
-            'I' -> padded(hour12(time.hour), 2, spaceFill = false, noPad = noPad)
-            'j' -> padded(time.dayOfYear, 3, spaceFill = false, noPad = noPad)
-            'm' -> padded(time.monthValue, 2, spaceFill = false, noPad = noPad)
-            'M' -> padded(time.minute, 2, spaceFill = false, noPad = noPad)
-            'S' -> padded(time.second, 2, spaceFill = false, noPad = noPad)
-            'y' -> padded(time.year % 100, 2, spaceFill = false, noPad = noPad)
+            'C' -> pad(time.year / 100, 2, flag, spaceFill = false)
+            'd' -> pad(time.dayOfMonth, 2, flag, spaceFill = false)
+            'e' -> pad(time.dayOfMonth, 2, flag, spaceFill = true)
+            'H' -> pad(time.hour, 2, flag, spaceFill = false)
+            'I' -> pad(hour12(time.hour), 2, flag, spaceFill = false)
+            'j' -> pad(time.dayOfYear, 3, flag, spaceFill = false)
+            'k' -> pad(time.hour, 2, flag, spaceFill = true)
+            'l' -> pad(hour12(time.hour), 2, flag, spaceFill = true)
+            'm' -> pad(time.monthValue, 2, flag, spaceFill = false)
+            'M' -> pad(time.minute, 2, flag, spaceFill = false)
+            'S' -> pad(time.second, 2, flag, spaceFill = false)
+            'V' -> pad(time.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR), 2, flag, spaceFill = false)
+            'y' -> pad(time.year % 100, 2, flag, spaceFill = false)
             else -> ""
         }
 
+    /** Conversions that are shorthand for a format of their own, in the C locale. */
     private fun composite(
         time: ZonedDateTime,
         conversion: Char,
     ): String =
         when (conversion) {
-            'D' -> formatTime(time, "%m/%d/%y")
+            'c' -> formatTime(time, "%a %b %e %H:%M:%S %Y")
+            'D', 'x' -> formatTime(time, "%m/%d/%y")
             'F' -> formatTime(time, "%Y-%m-%d")
+            'r' -> formatTime(time, "%I:%M:%S %p")
             'R' -> formatTime(time, "%H:%M")
-            'T' -> formatTime(time, "%H:%M:%S")
+            'T', 'X' -> formatTime(time, "%H:%M:%S")
+            'v' -> formatTime(time, "%e-%b-%Y")
             else -> ""
         }
 
@@ -157,14 +187,36 @@ object MicronTimestamp {
         return if (wrapped == 0) 12 else wrapped
     }
 
-    private fun padded(
+    /** The ISO 8601 week-based year, which can differ from the calendar year. */
+    private fun isoWeekYear(time: ZonedDateTime): Int = time.get(IsoFields.WEEK_BASED_YEAR)
+
+    /**
+     * The week of the year that `%U` and `%W` count. Days before the year's first Sunday or
+     * Monday are week zero.
+     */
+    private fun weekOfYear(
+        time: ZonedDateTime,
+        sundayFirst: Boolean,
+    ): Int {
+        val weekday = if (sundayFirst) time.dayOfWeek.value % 7 else time.dayOfWeek.value - 1
+        return (time.dayOfYear + 7 - weekday) / 7
+    }
+
+    /**
+     * Renders [value] at [width]. [flag] is the padding flag that preceded the conversion:
+     * `-` leaves it bare, `_` pads with spaces, `0` pads with zeros. With no flag,
+     * [spaceFill] selects the space padding that `%e`, `%k` and `%l` have by default.
+     */
+    private fun pad(
         value: Int,
         width: Int,
+        flag: Char?,
         spaceFill: Boolean,
-        noPad: Boolean,
     ): String =
         when {
-            noPad -> value.toString()
+            flag == '-' -> value.toString()
+            flag == '_' -> value.toString().padStart(width, ' ')
+            flag == '0' -> value.toString().padStart(width, '0')
             spaceFill -> value.toString().padStart(width, ' ')
             else -> value.toString().padStart(width, '0')
         }
